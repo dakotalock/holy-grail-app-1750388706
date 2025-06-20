@@ -1,0 +1,942 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AuraBloom Sanctuary</title>
+    <!-- Tailwind CSS CDN for utility-first styling -->
+    <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+    <!-- React and ReactDOM CDNs for UI framework -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <!-- Zustand CDN for state management -->
+    <script src="https://unpkg.com/zustand@4/umd/index.production.min.js"></script>
+    <!-- Three.js CDN for 3D generative visuals -->
+    <script src="https://unpkg.com/three@0.158.0/build/three.min.js"></script>
+
+    <style>
+        /* Custom styles for specific elements or overrides */
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            overflow: hidden; /* Prevent scrolling on the main game canvas */
+        }
+        #game-container {
+            width: 100vw;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            position: relative;
+        }
+        canvas {
+            display: block; /* Remove extra space below canvas */
+        }
+        .modal-overlay {
+            background-color: rgba(0, 0, 0, 0.7);
+        }
+        /* Basic scrollbar styling for modals */
+        .modal-content-scrollable::-webkit-scrollbar {
+            width: 8px;
+        }
+        .modal-content-scrollable::-webkit-scrollbar-track {
+            background: #2d3748; /* bg-gray-800 */
+            border-radius: 10px;
+        }
+        .modal-content-scrollable::-webkit-scrollbar-thumb {
+            background: #4a5568; /* bg-gray-700 */
+            border-radius: 10px;
+        }
+        .modal-content-scrollable::-webkit-scrollbar-thumb:hover {
+            background: #718096; /* bg-gray-600 */
+        }
+    </style>
+</head>
+<body class="bg-gradient-to-br from-indigo-900 to-purple-900 text-gray-100">
+    <div id="root"></div>
+
+    <script type="text/babel">
+        // Ensure Babel is loaded if using JSX directly in HTML, or pre-compile.
+        // For this self-contained example, we'll write pure JS or use a build step.
+        // As per the request, we'll use modern JS, but for JSX in a browser, a Babel transform is needed.
+        // For simplicity and direct browser execution without a build step,
+        // I will use React.createElement directly for JSX-like structure, or assume a browser that handles it.
+        // However, the prompt implies "Modern ES6+ JavaScript" and a "single HTML file",
+        // which typically means it should run directly.
+        // For React to work with JSX, we need a Babel-like transpiler in the browser or pre-compiled JS.
+        // Since the prompt doesn't specify Babel CDN, I will use `React.createElement` for components
+        // to ensure it runs directly without a build step or additional transpiler CDN.
+
+        const { useState, useEffect, useRef, useCallback, createContext, useContext } = React;
+        const { create } = Zustand;
+
+        // --- Constants and Utility Functions ---
+        const DB_NAME = 'AuraBloomSanctuaryDB';
+        const DB_VERSION = 1;
+        const STORE_NAME = 'gameState';
+
+        const RESOURCE_TYPES = ['Light Essence', 'Aqua Dew', 'Terra Spores'];
+        const CRAFTING_RECIPES = [
+            {
+                name: 'Aura Infusion (Growth)',
+                description: 'Boosts bloom growth significantly.',
+                inputs: { 'Light Essence': 5, 'Aqua Dew': 3 },
+                output: { type: 'growthBoost', value: 0.2 },
+                unlocksAt: 2 // Example: Unlocks after 2 blooms grown
+            },
+            {
+                name: 'Genetic Modifier (Hue)',
+                description: 'Subtly shifts bloom color hue.',
+                inputs: { 'Terra Spores': 4, 'Light Essence': 2 },
+                output: { type: 'hueShift', value: 0.1 },
+                unlocksAt: 3
+            }
+        ];
+        const BLOOM_TRAITS = [
+            'Luminescent', 'Petal-Rich', 'Spiraling', 'Radiant', 'Ethereal', 'Glimmering', 'Vibrant'
+        ];
+
+        // Helper for IndexedDB operations
+        const openDB = () => {
+            return new Promise((resolve, reject) => {
+                const request = indexedDB.open(DB_NAME, DB_VERSION);
+
+                request.onupgradeneeded = (event) => {
+                    const db = event.target.result;
+                    if (!db.objectStoreNames.contains(STORE_NAME)) {
+                        db.createObjectStore(STORE_NAME, { keyPath: 'id' });
+                    }
+                };
+
+                request.onsuccess = (event) => {
+                    resolve(event.target.result);
+                };
+
+                request.onerror = (event) => {
+                    console.error("IndexedDB error:", event.target.errorCode);
+                    reject("IndexedDB error: " + event.target.errorCode);
+                };
+            });
+        };
+
+        const saveGameState = async (state) => {
+            try {
+                const db = await openDB();
+                const tx = db.transaction(STORE_NAME, 'readwrite');
+                const store = tx.objectStore(STORE_NAME);
+                await store.put({ id: 'current', data: state });
+                await tx.complete; // Use tx.complete for IDBTransaction (Promises API)
+                console.log('Game state saved successfully.');
+            } catch (error) {
+                console.error('Failed to save game state:', error);
+                alert('Failed to save game progress. Please check browser storage settings.');
+            }
+        };
+
+        const loadGameState = async () => {
+            try {
+                const db = await openDB();
+                const tx = db.transaction(STORE_NAME, 'readonly');
+                const store = tx.objectStore(STORE_NAME);
+                const request = store.get('current');
+
+                return new Promise((resolve, reject) => {
+                    request.onsuccess = (event) => {
+                        resolve(event.target.result ? event.target.result.data : null);
+                    };
+                    request.onerror = (event) => {
+                        console.error('Failed to load game state:', event.target.errorCode);
+                        reject('Failed to load game state.');
+                    };
+                });
+            } catch (error) {
+                console.error('Failed to open DB for loading:', error);
+                return null;
+            }
+        };
+
+        // Debounce function to limit save calls
+        const debounce = (func, delay) => {
+            let timeout;
+            return function(...args) {
+                const context = this;
+                clearTimeout(timeout);
+                timeout = setTimeout(() => func.apply(context, args), delay);
+            };
+        };
+
+        // --- Zustand Game Store ---
+        const useGameStore = create((set, get) => ({
+            // Game State
+            blooms: [], // Array of { id, name, geneticSeed (params), growthStage, resourcesApplied, lastNurtured, position, discoveredTraits }
+            inventory: RESOURCE_TYPES.reduce((acc, type) => ({ ...acc, [type]: 5 }), {}), // Initial resources
+            sanctuaryLayout: [], // [{ bloomId, x, y }]
+            discoveredBloomTypes: new Set(), // Set of unique bloom "fingerprints" / genetic types
+            achievements: {
+                firstBloom: false,
+                fiveBlooms: false,
+                rareTrait: false,
+            },
+            currentEssence: 100, // Global currency
+            currentGlimmer: 50, // Global currency
+            activeView: 'sanctuary', // 'sanctuary', 'bloomDetail', 'inventory', 'aurapedia', 'settings'
+            selectedBloomId: null,
+
+            // Actions
+            setView: (view) => set({ activeView: view }),
+            setSelectedBloom: (id) => set({ selectedBloomId: id }),
+
+            addBloom: () => {
+                const newBloomId = `bloom_${Date.now()}`;
+                const initialSeed = {
+                    hue: Math.random(),
+                    saturation: 0.5 + Math.random() * 0.5,
+                    lightness: 0.5 + Math.random() * 0.5,
+                    growthFactor: 0.1,
+                    complexity: 0.1,
+                    // Simple representation of L-system parameters
+                    angle: Math.PI / 4 + (Math.random() * Math.PI / 8 - Math.PI / 16),
+                    segments: 3 + Math.floor(Math.random() * 3) // Initial segments
+                };
+                const newBloom = {
+                    id: newBloomId,
+                    name: `AuraBloom #${get().blooms.length + 1}`,
+                    geneticSeed: initialSeed,
+                    growthProgress: 0, // 0 to 1, for current stage
+                    growthStage: 1, // 1, 2, 3...
+                    resourcesApplied: {},
+                    lastNurtured: Date.now(),
+                    position: { x: Math.random() * 10 - 5, y: Math.random() * 10 - 5, z: 0 }, // For 3D placement
+                    discoveredTraits: new Set(),
+                    rarityScore: 0 // Will increase with unique traits/growth
+                };
+
+                set(state => ({
+                    blooms: [...state.blooms, newBloom],
+                    sanctuaryLayout: [...state.sanctuaryLayout, { bloomId: newBloomId, x: newBloom.position.x, y: newBloom.position.y }],
+                }));
+                get().checkAchievements();
+            },
+
+            nurtureBloom: (bloomId, resourceType) => {
+                set(state => {
+                    const bloomIndex = state.blooms.findIndex(b => b.id === bloomId);
+                    if (bloomIndex === -1 || state.inventory[resourceType] <= 0) return state;
+
+                    const updatedBlooms = [...state.blooms];
+                    const bloom = { ...updatedBlooms[bloomIndex] };
+
+                    // Consume resource
+                    const newInventory = { ...state.inventory, [resourceType]: state.inventory[resourceType] - 1 };
+
+                    // Apply resource effect: increase growth progress and subtly mutate genetic seed
+                    bloom.growthProgress += 0.15; // Each resource gives 15% progress
+                    bloom.resourcesApplied[resourceType] = (bloom.resourcesApplied[resourceType] || 0) + 1;
+
+                    // Genetic mutation based on resource type
+                    switch (resourceType) {
+                        case 'Light Essence':
+                            bloom.geneticSeed.hue = (bloom.geneticSeed.hue + 0.05) % 1; // Shift hue
+                            bloom.geneticSeed.lightness = Math.min(1, bloom.geneticSeed.lightness + 0.03);
+                            break;
+                        case 'Aqua Dew':
+                            bloom.geneticSeed.saturation = Math.min(1, bloom.geneticSeed.saturation + 0.05);
+                            bloom.geneticSeed.growthFactor = Math.min(1, bloom.geneticSeed.growthFactor + 0.02);
+                            bloom.geneticSeed.angle = (bloom.geneticSeed.angle + 0.05) % (Math.PI * 2);
+                            break;
+                        case 'Terra Spores':
+                            bloom.geneticSeed.complexity = Math.min(1, bloom.geneticSeed.complexity + 0.03);
+                            bloom.geneticSeed.segments = Math.min(10, bloom.geneticSeed.segments + 1); // Add segments
+                            break;
+                    }
+
+                    // Check for growth stage progression
+                    if (bloom.growthProgress >= 1) {
+                        bloom.growthStage += 1;
+                        bloom.growthProgress = 0; // Reset for next stage
+                        bloom.geneticSeed.growthFactor = Math.min(1, bloom.geneticSeed.growthFactor + 0.1); // Accelerate growth
+                        bloom.geneticSeed.complexity = Math.min(1, bloom.geneticSeed.complexity + 0.1); // Increase complexity
+
+                        // Unlock new traits based on growth stage
+                        if (bloom.growthStage >= 2 && !bloom.discoveredTraits.has('Luminescent')) {
+                            bloom.discoveredTraits.add('Luminescent');
+                            state.discoveredBloomTypes.add('Luminescent Bloom');
+                            bloom.rarityScore += 10;
+                            get().checkAchievements();
+                        }
+                        if (bloom.growthStage >= 3 && !bloom.discoveredTraits.has('Petal-Rich')) {
+                            bloom.discoveredTraits.add('Petal-Rich');
+                            state.discoveredBloomTypes.add('Petal-Rich Bloom');
+                            bloom.rarityScore += 15;
+                            get().checkAchievements();
+                        }
+                        // Add more complex trait discovery based on genetic seed values
+                        if (bloom.geneticSeed.hue > 0.8 && bloom.geneticSeed.saturation > 0.9 && !bloom.discoveredTraits.has('Radiant')) {
+                            bloom.discoveredTraits.add('Radiant');
+                            state.discoveredBloomTypes.add('Radiant Bloom');
+                            bloom.rarityScore += 20;
+                            get().checkAchievements();
+                        }
+                    }
+
+                    bloom.lastNurtured = Date.now();
+                    updatedBlooms[bloomIndex] = bloom;
+
+                    return {
+                        blooms: updatedBlooms,
+                        inventory: newInventory,
+                    };
+                });
+            },
+
+            collectResource: (resourceType, amount) => {
+                set(state => ({
+                    inventory: {
+                        ...state.inventory,
+                        [resourceType]: (state.inventory[resourceType] || 0) + amount,
+                    },
+                    currentEssence: state.currentEssence + Math.floor(amount / 2) // Passive essence gain
+                }));
+            },
+
+            craftItem: (recipeName) => {
+                set(state => {
+                    const recipe = CRAFTING_RECIPES.find(r => r.name === recipeName);
+                    if (!recipe) return state;
+
+                    const newInventory = { ...state.inventory };
+                    let canCraft = true;
+                    for (const input in recipe.inputs) {
+                        if (newInventory[input] < recipe.inputs[input]) {
+                            canCraft = false;
+                            break;
+                        }
+                    }
+
+                    if (canCraft) {
+                        for (const input in recipe.inputs) {
+                            newInventory[input] -= recipe.inputs[input];
+                        }
+                        // For simplicity, crafting directly applies effect or gives resources
+                        alert(`Crafted ${recipe.name}! Its effect is applied.`); // Placeholder for actual effect application
+                        // In a real game, this output would be an item in inventory that can be 'used'
+                    } else {
+                        alert('Not enough resources to craft ' + recipe.name);
+                    }
+
+                    return { inventory: newInventory };
+                });
+            },
+
+            checkAchievements: () => {
+                set(state => {
+                    const updatedAchievements = { ...state.achievements };
+
+                    if (state.blooms.length >= 1 && !updatedAchievements.firstBloom) {
+                        updatedAchievements.firstBloom = true;
+                        alert('Achievement Unlocked: First Bloom!');
+                    }
+                    if (state.blooms.length >= 5 && !updatedAchievements.fiveBlooms) {
+                        updatedAchievements.fiveBlooms = true;
+                        alert('Achievement Unlocked: Sanctuary Builder (5 Blooms)!');
+                    }
+                    // Check for rare trait achievement
+                    const hasRareTrait = state.blooms.some(bloom =>
+                        Array.from(bloom.discoveredTraits).some(trait => trait === 'Radiant')
+                    );
+                    if (hasRareTrait && !updatedAchievements.rareTrait) {
+                        updatedAchievements.rareTrait = true;
+                        alert('Achievement Unlocked: Rare Trait Discovered!');
+                    }
+
+                    return { achievements: updatedAchievements };
+                });
+            },
+
+            // Persistence integration
+            loadGame: async () => {
+                const loadedState = await loadGameState();
+                if (loadedState) {
+                    // Reconstruct Sets from arrays for discoveredBloomTypes and discoveredTraits
+                    loadedState.discoveredBloomTypes = new Set(loadedState.discoveredBloomTypes);
+                    loadedState.blooms = loadedState.blooms.map(bloom => ({
+                        ...bloom,
+                        discoveredTraits: new Set(bloom.discoveredTraits)
+                    }));
+                    set(loadedState);
+                    console.log('Game loaded from IndexedDB.');
+                } else {
+                    console.log('No saved game found. Starting new game.');
+                    get().addBloom(); // Start with one bloom for new players
+                }
+            },
+            saveGame: debounce(() => {
+                const stateToSave = get();
+                // Convert Sets to Arrays for serialization
+                const serializableState = {
+                    ...stateToSave,
+                    discoveredBloomTypes: Array.from(stateToSave.discoveredBloomTypes),
+                    blooms: stateToSave.blooms.map(bloom => ({
+                        ...bloom,
+                        discoveredTraits: Array.from(bloom.discoveredTraits)
+                    }))
+                };
+                saveGameState(serializableState);
+            }, 1000), // Save every 1 second after last change
+        }));
+
+
+        // --- Three.js AuraBloom Generative Renderer Component ---
+        const BloomCanvas = ({ bloom, isSelected, onClick }) => {
+            const mountRef = useRef(null);
+            const sceneRef = useRef(null);
+            const cameraRef = useRef(null);
+            const rendererRef = useRef(null);
+            const bloomMeshRef = useRef(null);
+            const animationFrameId = useRef(null);
+
+            const { geneticSeed } = bloom;
+
+            useEffect(() => {
+                // Scene setup
+                const scene = new THREE.Scene();
+                sceneRef.current = scene;
+
+                // Camera setup
+                const camera = new THREE.PerspectiveCamera(75, 1, 0.1, 1000);
+                camera.position.z = 5;
+                cameraRef.current = camera;
+
+                // Renderer setup
+                const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+                renderer.setSize(200, 200); // Fixed size for individual bloom display
+                renderer.setPixelRatio(window.devicePixelRatio);
+                mountRef.current.appendChild(renderer.domElement);
+                rendererRef.current = renderer;
+
+                // Lighting
+                const ambientLight = new THREE.AmbientLight(0x404040); // Soft white light
+                scene.add(ambientLight);
+                const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+                directionalLight.position.set(0, 10, 5);
+                scene.add(directionalLight);
+
+                // Initial Bloom Geometry (simplified L-system concept)
+                const createBloomGeometry = (seed) => {
+                    const segments = seed.segments || 5;
+                    const radiusTop = 0.1 * seed.complexity;
+                    const radiusBottom = 0.5 * seed.complexity;
+                    const height = 2 + seed.growthFactor * 3;
+                    const radialSegments = 8 + Math.floor(seed.complexity * 16);
+
+                    // Use a more organic shape, e.g., a LatheGeometry or custom geometry
+                    // For simplicity, let's use a CylinderGeometry and deform it,
+                    // or simulate L-system with multiple nested geometries.
+                    // A simple cone for the base.
+                    const geometry = new THREE.CylinderGeometry(radiusTop, radiusBottom, height, radialSegments, segments);
+
+                    // Add some "petals" - simplified by adding more meshes
+                    const petalCount = Math.floor(seed.complexity * 10) + 3;
+                    const petalGeometries = [];
+                    for (let i = 0; i < petalCount; i++) {
+                        const petalWidth = 0.1 + seed.saturation * 0.2;
+                        const petalHeight = 0.5 + seed.growthFactor * 0.8;
+                        const petalDepth = 0.05;
+                        const petalGeo = new THREE.BoxGeometry(petalWidth, petalHeight, petalDepth);
+                        petalGeo.translate(0, height / 2, 0); // Position relative to bloom base
+
+                        const petalAngle = (Math.PI * 2 / petalCount) * i + (seed.angle * 10);
+                        petalGeo.rotateY(petalAngle);
+                        petalGeo.translate(Math.sin(petalAngle) * radiusBottom, 0, Math.cos(petalAngle) * radiusBottom);
+
+                        petalGeometries.push(petalGeo);
+                    }
+
+                    // Merge geometries (more complex for real L-systems)
+                    // For this example, we'll just return a group for multiple objects
+                    const baseMesh = new THREE.Mesh(geometry);
+                    baseMesh.position.y = height / 2; // Center the cylinder vertically
+
+                    const group = new THREE.Group();
+                    group.add(baseMesh);
+
+                    petalGeometries.forEach(geo => {
+                        group.add(new THREE.Mesh(geo));
+                    });
+
+                    return group;
+                };
+
+                // Update Bloom Appearance function
+                const updateBloomAppearance = () => {
+                    if (bloomMeshRef.current) {
+                        scene.remove(bloomMeshRef.current);
+                    }
+
+                    const { hue, saturation, lightness, growthFactor, complexity, angle, segments } = bloom.geneticSeed;
+                    const color = new THREE.Color().setHSL(hue, saturation, lightness);
+
+                    const material = new THREE.MeshPhongMaterial({ color: color, flatShading: true });
+
+                    // Create a more complex structure based on geneticSeed
+                    const bloomGroup = new THREE.Group();
+
+                    // Main Stem/Core
+                    const coreHeight = 1 + growthFactor * 2;
+                    const coreRadiusTop = 0.05 + complexity * 0.1;
+                    const coreRadiusBottom = 0.1 + complexity * 0.2;
+                    const coreGeo = new THREE.CylinderGeometry(coreRadiusTop, coreRadiusBottom, coreHeight, 8, 1);
+                    const coreMesh = new THREE.Mesh(coreGeo, material);
+                    coreMesh.position.y = coreHeight / 2;
+                    bloomGroup.add(coreMesh);
+
+                    // Petals/Branches (simplified L-system: iterative branching)
+                    const branchCount = Math.floor(complexity * 8) + 3;
+                    for (let i = 0; i < branchCount; i++) {
+                        const branchAngle = (Math.PI * 2 / branchCount) * i + angle;
+                        const branchLength = 0.5 + growthFactor * 1.5 * Math.random();
+                        const branchRadius = 0.02 + complexity * 0.03;
+
+                        const branchGeo = new THREE.CylinderGeometry(branchRadius, branchRadius, branchLength, 4);
+                        const branchMesh = new THREE.Mesh(branchGeo, material);
+
+                        branchMesh.rotation.z = Math.PI / 2; // Rotate to be horizontal
+                        branchMesh.position.set(
+                            Math.cos(branchAngle) * coreRadiusBottom * 1.5,
+                            coreHeight * (0.3 + Math.random() * 0.7),
+                            Math.sin(branchAngle) * coreRadiusBottom * 1.5
+                        );
+                        branchMesh.lookAt(coreMesh.position.x, coreMesh.position.y, coreMesh.position.z); // Point away from center
+                        branchMesh.position.add(new THREE.Vector3(Math.cos(branchAngle) * branchLength / 2, 0, Math.sin(branchAngle) * branchLength / 2));
+
+                        // Add small "leaves" or "blooms" at the end of branches
+                        const leafGeo = new THREE.SphereGeometry(0.05 + complexity * 0.1, 8, 8);
+                        const leafMesh = new THREE.Mesh(leafGeo, material);
+                        leafMesh.position.set(branchLength / 2, 0, 0); // At the end of the branch
+                        branchMesh.add(leafMesh);
+
+                        bloomGroup.add(branchMesh);
+                    }
+
+                    // Overall scaling based on growth stage
+                    const scaleFactor = 0.8 + (bloom.growthStage - 1) * 0.2 + bloom.growthProgress * 0.2;
+                    bloomGroup.scale.set(scaleFactor, scaleFactor, scaleFactor);
+
+                    // Add a subtle glow for selected blooms
+                    if (isSelected) {
+                        const glowMaterial = new THREE.MeshBasicMaterial({
+                            color: new THREE.Color().setHSL(hue, saturation, lightness + 0.2),
+                            transparent: true,
+                            opacity: 0.5,
+                            blending: THREE.AdditiveBlending,
+                            side: THREE.BackSide
+                        });
+                        const glowMesh = new THREE.Mesh(coreGeo.clone(), glowMaterial); // Clone core geo for glow
+                        glowMesh.scale.multiplyScalar(1.2); // Make glow slightly larger
+                        glowMesh.position.y = coreHeight / 2;
+                        bloomGroup.add(glowMesh);
+                    }
+
+
+                    bloomMeshRef.current = bloomGroup;
+                    scene.add(bloomGroup);
+                };
+
+                updateBloomAppearance(); // Initial draw
+
+                // Animation loop
+                const animate = () => {
+                    animationFrameId.current = requestAnimationFrame(animate);
+
+                    if (bloomMeshRef.current) {
+                        bloomMeshRef.current.rotation.y += 0.005; // Gentle rotation
+                    }
+
+                    renderer.render(scene, camera);
+                };
+                animate();
+
+                // Cleanup
+                return () => {
+                    cancelAnimationFrame(animationFrameId.current);
+                    if (rendererRef.current) {
+                        rendererRef.current.dispose();
+                        mountRef.current.removeChild(rendererRef.current.domElement);
+                    }
+                    if (sceneRef.current) {
+                        sceneRef.current.traverse(object => {
+                            if (object.isMesh) {
+                                object.geometry.dispose();
+                                object.material.dispose();
+                            }
+                        });
+                    }
+                };
+            }, [bloom.geneticSeed, bloom.growthStage, bloom.growthProgress, isSelected]); // Re-render if genetic seed changes or selection changes
+
+            return React.createElement('div', {
+                ref: mountRef,
+                className: `relative w-48 h-48 rounded-lg shadow-lg overflow-hidden transition-all duration-300
+                            ${isSelected ? 'ring-4 ring-purple-400 scale-105' : 'hover:scale-105'} cursor-pointer`,
+                onClick: onClick,
+                style: {
+                    transform: `translate(${bloom.position.x * 20}px, ${bloom.position.y * 20}px)`, // Adjust for visual placement
+                    // This position is relative to its parent container, not global 3D space
+                    // For a grid, actual positioning would be done via CSS grid or flexbox
+                    // For this demo, let's just make them appear in a flex row for simplicity
+                }
+            });
+        };
+
+        // --- Reusable UI Components ---
+
+        const Button = ({ onClick, children, className = '', disabled = false, ...props }) => {
+            return React.createElement('button', {
+                onClick: onClick,
+                className: `px-4 py-2 rounded-md font-semibold transition-all duration-200
+                            ${disabled ? 'bg-gray-600 text-gray-400 cursor-not-allowed' : 'bg-purple-600 hover:bg-purple-700 active:bg-purple-800 text-white shadow-md'}
+                            ${className}`,
+                disabled: disabled,
+                ...props
+            }, children);
+        };
+
+        const Modal = ({ isOpen, onClose, title, children }) => {
+            if (!isOpen) return null;
+
+            return React.createElement('div', {
+                className: 'fixed inset-0 z-50 flex items-center justify-center p-4 modal-overlay',
+                role: 'dialog',
+                'aria-modal': 'true',
+                'aria-labelledby': 'modal-title'
+            },
+                React.createElement('div', {
+                    className: 'bg-gray-800 rounded-lg shadow-xl max-w-2xl w-full max-h-[90vh] flex flex-col',
+                    role: 'document'
+                },
+                    React.createElement('div', { className: 'flex justify-between items-center p-4 border-b border-gray-700' },
+                        React.createElement('h2', { id: 'modal-title', className: 'text-xl font-bold text-purple-300' }, title),
+                        React.createElement(Button, { onClick: onClose, className: 'bg-transparent hover:bg-gray-700 text-gray-400 hover:text-white', 'aria-label': 'Close modal' }, '✕')
+                    ),
+                    React.createElement('div', { className: 'p-4 flex-grow overflow-y-auto modal-content-scrollable' },
+                        children
+                    ),
+                    React.createElement('div', { className: 'p-4 border-t border-gray-700 text-right' },
+                        React.createElement(Button, { onClick: onClose }, 'Close')
+                    )
+                )
+            );
+        };
+
+        // --- Views / Pages ---
+
+        const SanctuaryView = () => {
+            const { blooms, addBloom, setSelectedBloom, setView } = useGameStore();
+
+            return React.createElement('div', { className: 'flex-grow p-4 overflow-auto flex flex-wrap justify-center items-start gap-8' },
+                blooms.length === 0 && React.createElement('div', { className: 'text-center text-gray-400 mt-20' },
+                    React.createElement('p', null, 'Your sanctuary is empty. Plant your first AuraBloom!'),
+                    React.createElement(Button, { onClick: addBloom, className: 'mt-4' }, 'Plant First AuraBloom')
+                ),
+                blooms.map(bloom =>
+                    React.createElement(BloomCanvas, {
+                        key: bloom.id,
+                        bloom: bloom,
+                        isSelected: false, // Not selected in this view, click opens detail
+                        onClick: () => {
+                            setSelectedBloom(bloom.id);
+                            setView('bloomDetail');
+                        }
+                    })
+                ),
+                blooms.length > 0 && React.createElement(Button, { onClick: addBloom, className: 'mt-4 self-center' }, 'Plant New Bloom')
+            );
+        };
+
+        const BloomDetailView = () => {
+            const { blooms, selectedBloomId, setView, setSelectedBloom, nurtureBloom, inventory } = useGameStore();
+            const bloom = blooms.find(b => b.id === selectedBloomId);
+
+            if (!bloom) {
+                // If bloom is not found (e.g., deleted), go back to sanctuary
+                setView('sanctuary');
+                setSelectedBloom(null);
+                return null;
+            }
+
+            const progressPercentage = Math.floor(bloom.growthProgress * 100);
+
+            return React.createElement(Modal, {
+                isOpen: true,
+                onClose: () => { setView('sanctuary'); setSelectedBloom(null); },
+                title: bloom.name
+            },
+                React.createElement('div', { className: 'flex flex-col md:flex-row gap-4' },
+                    React.createElement('div', { className: 'flex-1 flex justify-center items-center p-4 bg-gray-700 rounded-lg' },
+                        // High-fidelity rendering of selected bloom
+                        React.createElement(BloomCanvas, { bloom: bloom, isSelected: true, onClick: () => {} })
+                    ),
+                    React.createElement('div', { className: 'flex-1 p-4 bg-gray-700 rounded-lg' },
+                        React.createElement('h3', { className: 'text-lg font-semibold mb-2' }, 'Bloom Stats'),
+                        React.createElement('p', { className: 'mb-1' }, React.createElement('strong', null, 'Growth Stage: '), `${bloom.growthStage}`),
+                        React.createElement('p', { className: 'mb-1' }, React.createElement('strong', null, 'Growth Progress: '), `${progressPercentage}%`),
+                        React.createElement('p', { className: 'mb-4' }, React.createElement('strong', null, 'Traits: '),
+                            bloom.discoveredTraits.size > 0 ? Array.from(bloom.discoveredTraits).join(', ') : 'None yet'
+                        ),
+
+                        React.createElement('h3', { className: 'text-lg font-semibold mb-2' }, 'Nurture'),
+                        React.createElement('div', { className: 'grid grid-cols-2 gap-2' },
+                            RESOURCE_TYPES.map(resource =>
+                                React.createElement(Button, {
+                                    key: resource,
+                                    onClick: () => nurtureBloom(bloom.id, resource),
+                                    disabled: inventory[resource] <= 0,
+                                    className: 'flex flex-col items-center justify-center p-2 text-sm'
+                                },
+                                    React.createElement('span', null, resource),
+                                    React.createElement('span', { className: 'text-xs text-gray-400' }, `(${inventory[resource]} left)`)
+                                )
+                            )
+                        ),
+                        React.createElement('div', { className: 'mt-4 pt-4 border-t border-gray-600 flex justify-between' },
+                            React.createElement(Button, { className: 'bg-red-700 hover:bg-red-800', onClick: () => alert('Release functionality not implemented') }, 'Release Bloom'),
+                            React.createElement(Button, { onClick: () => alert('Rename functionality not implemented') }, 'Rename')
+                        )
+                    )
+                )
+            );
+        };
+
+        const InventoryCraftingView = () => {
+            const { inventory, craftItem } = useGameStore();
+            const [activeTab, setActiveTab] = useState('inventory');
+
+            const canCraftRecipe = (recipe) => {
+                const { inventory } = useGameStore.getState(); // Get current state for live check
+                for (const input in recipe.inputs) {
+                    if (inventory[input] < recipe.inputs[input]) {
+                        return false;
+                    }
+                }
+                return true;
+            };
+
+            return React.createElement(Modal, {
+                isOpen: true,
+                onClose: () => useGameStore.getState().setView('sanctuary'),
+                title: 'Inventory & Crafting'
+            },
+                React.createElement('div', { className: 'flex border-b border-gray-700 mb-4' },
+                    React.createElement('button', {
+                        className: `py-2 px-4 text-sm font-medium ${activeTab === 'inventory' ? 'border-b-2 border-purple-500 text-purple-300' : 'text-gray-400 hover:text-gray-200'}`,
+                        onClick: () => setActiveTab('inventory')
+                    }, 'Inventory'),
+                    React.createElement('button', {
+                        className: `py-2 px-4 text-sm font-medium ${activeTab === 'crafting' ? 'border-b-2 border-purple-500 text-purple-300' : 'text-gray-400 hover:text-gray-200'}`,
+                        onClick: () => setActiveTab('crafting')
+                    }, 'Crafting')
+                ),
+                activeTab === 'inventory' && React.createElement('div', null,
+                    React.createElement('h3', { className: 'text-lg font-semibold mb-2' }, 'Resources'),
+                    React.createElement('div', { className: 'grid grid-cols-2 md:grid-cols-3 gap-4' },
+                        Object.entries(inventory).map(([resource, quantity]) =>
+                            React.createElement('div', { key: resource, className: 'bg-gray-700 p-3 rounded-lg text-center' },
+                                React.createElement('p', { className: 'text-lg font-bold' }, resource),
+                                React.createElement('p', { className: 'text-gray-400' }, `Quantity: ${quantity}`)
+                            )
+                        )
+                    )
+                ),
+                activeTab === 'crafting' && React.createElement('div', null,
+                    React.createElement('h3', { className: 'text-lg font-semibold mb-2' }, 'Recipes'),
+                    React.createElement('div', { className: 'space-y-4' },
+                        CRAFTING_RECIPES.map(recipe =>
+                            React.createElement('div', { key: recipe.name, className: 'bg-gray-700 p-4 rounded-lg' },
+                                React.createElement('h4', { className: 'text-md font-bold text-purple-300' }, recipe.name),
+                                React.createElement('p', { className: 'text-sm text-gray-400 mb-2' }, recipe.description),
+                                React.createElement('p', { className: 'text-sm mb-2' }, React.createElement('strong', null, 'Required:')),
+                                React.createElement('ul', { className: 'list-disc list-inside text-sm text-gray-300 mb-4' },
+                                    Object.entries(recipe.inputs).map(([input, amount]) =>
+                                        React.createElement('li', { key: input }, `${amount} ${input}`)
+                                    )
+                                ),
+                                React.createElement(Button, {
+                                    onClick: () => craftItem(recipe.name),
+                                    disabled: !canCraftRecipe(recipe)
+                                }, `Craft ${recipe.name}`)
+                            )
+                        )
+                    )
+                )
+            );
+        };
+
+        const AuraPediaView = () => {
+            const { discoveredBloomTypes, achievements } = useGameStore();
+            const [activeTab, setActiveTab] = useState('blooms');
+
+            return React.createElement(Modal, {
+                isOpen: true,
+                onClose: () => useGameStore.getState().setView('sanctuary'),
+                title: 'AuraPedia & Achievements'
+            },
+                React.createElement('div', { className: 'flex border-b border-gray-700 mb-4' },
+                    React.createElement('button', {
+                        className: `py-2 px-4 text-sm font-medium ${activeTab === 'blooms' ? 'border-b-2 border-purple-500 text-purple-300' : 'text-gray-400 hover:text-gray-200'}`,
+                        onClick: () => setActiveTab('blooms')
+                    }, 'Discovered Blooms'),
+                    React.createElement('button', {
+                        className: `py-2 px-4 text-sm font-medium ${activeTab === 'achievements' ? 'border-b-2 border-purple-500 text-purple-300' : 'text-gray-400 hover:text-gray-200'}`,
+                        onClick: () => setActiveTab('achievements')
+                    }, 'Achievements')
+                ),
+                activeTab === 'blooms' && React.createElement('div', null,
+                    React.createElement('h3', { className: 'text-lg font-semibold mb-2' }, 'Discovered AuraBloom Types'),
+                    discoveredBloomTypes.size === 0 && React.createElement('p', { className: 'text-gray-400' }, 'Cultivate blooms to discover new types!'),
+                    React.createElement('ul', { className: 'list-disc list-inside space-y-2' },
+                        Array.from(discoveredBloomTypes).map(type =>
+                            React.createElement('li', { key: type, className: 'text-gray-300' }, type)
+                        )
+                    )
+                ),
+                activeTab === 'achievements' && React.createElement('div', null,
+                    React.createElement('h3', { className: 'text-lg font-semibold mb-2' }, 'Achievements'),
+                    React.createElement('div', { className: 'grid grid-cols-1 md:grid-cols-2 gap-4' },
+                        Object.entries(achievements).map(([key, completed]) =>
+                            React.createElement('div', {
+                                key: key,
+                                className: `p-4 rounded-lg ${completed ? 'bg-green-800' : 'bg-gray-700'}`
+                            },
+                                React.createElement('h4', { className: 'font-bold' },
+                                    key === 'firstBloom' ? 'First Bloom!' :
+                                    key === 'fiveBlooms' ? 'Sanctuary Builder' :
+                                    key === 'rareTrait' ? 'Rare Trait Collector' :
+                                    key // Fallback
+                                ),
+                                React.createElement('p', { className: 'text-sm text-gray-300' },
+                                    key === 'firstBloom' ? 'Plant your very first AuraBloom.' :
+                                    key === 'fiveBlooms' ? 'Cultivate 5 AuraBlooms in your sanctuary.' :
+                                    key === 'rareTrait' ? 'Discover a rare bloom trait.' :
+                                    '' // Fallback
+                                ),
+                                React.createElement('p', { className: `mt-2 font-semibold ${completed ? 'text-white' : 'text-gray-400'}` },
+                                    completed ? 'Completed!' : 'In Progress'
+                                )
+                            )
+                        )
+                    )
+                )
+            );
+        };
+
+        const SettingsView = () => {
+            const { loadGame, saveGame } = useGameStore(); // Get actions directly
+            return React.createElement(Modal, {
+                isOpen: true,
+                onClose: () => useGameStore.getState().setView('sanctuary'),
+                title: 'Settings'
+            },
+                React.createElement('div', { className: 'space-y-4' },
+                    React.createElement('p', { className: 'text-gray-300' }, 'Manage your game settings and save options.'),
+                    React.createElement(Button, { onClick: saveGame }, 'Manual Save Game'),
+                    React.createElement(Button, { onClick: () => {
+                        if (confirm('Are you sure you want to load? Unsaved progress will be lost.')) {
+                            loadGame();
+                            useGameStore.getState().setView('sanctuary'); // Close settings after load
+                        }
+                    }}, 'Load Game'),
+                    React.createElement(Button, { className: 'bg-red-700 hover:bg-red-800', onClick: () => {
+                        if (confirm('This will reset all your progress. Are you sure?')) {
+                            indexedDB.deleteDatabase(DB_NAME);
+                            alert('Game data cleared. Reloading game.');
+                            window.location.reload();
+                        }
+                    }}, 'Reset Game Progress')
+                )
+            );
+        };
+
+
+        // --- Main App Component ---
+        const App = () => {
+            const { activeView, setView, currentEssence, currentGlimmer, loadGame, saveGame, collectResource } = useGameStore();
+
+            // Load game state on component mount
+            useEffect(() => {
+                loadGame();
+                // Add a global autosave listener (debounced by Zustand action)
+                const unsubscribe = useGameStore.subscribe(
+                    (state) => state, // Watch entire state
+                    (state) => saveGame(), // Call saveGame on any state change
+                    { equalityFn: (a, b) => JSON.stringify(a) === JSON.stringify(b) } // Deep compare to avoid excessive saves
+                );
+
+                // Simulate passive resource generation
+                const resourceInterval = setInterval(() => {
+                    collectResource(RESOURCE_TYPES[Math.floor(Math.random() * RESOURCE_TYPES.length)], 1);
+                }, 30000); // Every 30 seconds
+
+                // Clean up on unmount
+                return () => {
+                    unsubscribe();
+                    clearInterval(resourceInterval);
+                };
+            }, [loadGame, saveGame, collectResource]); // Dependencies for useEffect
+
+            const renderView = () => {
+                switch (activeView) {
+                    case 'sanctuary':
+                        return React.createElement(SanctuaryView);
+                    case 'bloomDetail':
+                        return React.createElement(BloomDetailView);
+                    case 'inventory':
+                        return React.createElement(InventoryCraftingView);
+                    case 'aurapedia':
+                        return React.createElement(AuraPediaView);
+                    case 'settings':
+                        return React.createElement(SettingsView);
+                    default:
+                        return React.createElement(SanctuaryView);
+                }
+            };
+
+            return React.createElement('div', { id: 'game-container', className: 'relative bg-gradient-to-br from-indigo-900 to-purple-900 text-gray-100' },
+                // Top Bar
+                React.createElement('div', { className: 'absolute top-0 left-0 right-0 p-4 bg-gray-900 bg-opacity-70 flex justify-between items-center z-10' },
+                    React.createElement('div', { className: 'text-2xl font-bold text-purple-300' }, 'AuraBloom Sanctuary'),
+                    React.createElement('div', { className: 'flex items-center space-x-4' },
+                        React.createElement('span', { className: 'text-lg' }, `Essence: ${currentEssence}`),
+                        React.createElement('span', { className: 'text-lg' }, `Glimmer: ${currentGlimmer}`),
+                        React.createElement(Button, { onClick: () => setView('inventory'), 'aria-label': 'Open Inventory' }, 'Inventory'),
+                        React.createElement(Button, { onClick: () => setView('aurapedia'), 'aria-label': 'Open AuraPedia' }, 'AuraPedia'),
+                        React.createElement(Button, { onClick: () => setView('settings'), 'aria-label': 'Open Settings' }, 'Settings')
+                    )
+                ),
+
+                // Main Content Area (Sanctuary View or other views)
+                React.createElement('div', { className: 'flex-grow pt-20 pb-16 overflow-hidden' }, // Adjust padding for top/bottom bars
+                    renderView()
+                ),
+
+                // Bottom Bar (Contextual actions - basic for now)
+                React.createElement('div', { className: 'absolute bottom-0 left-0 right-0 p-4 bg-gray-900 bg-opacity-70 flex justify-center items-center space-x-4 z-10' },
+                    activeView === 'sanctuary' && (
+                        React.createElement(Button, { onClick: () => useGameStore.getState().addBloom() }, 'Plant New Bloom')
+                    ),
+                    activeView === 'bloomDetail' && (
+                        React.createElement(Button, { onClick: () => useGameStore.getState().setView('sanctuary') }, 'Back to Sanctuary')
+                    )
+                )
+            );
+        };
+
+        // Render the App
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(React.createElement(App));
+
+    </script>
+
+    <div style="position:fixed;bottom:10px;right:10px;background:rgba(0,0,0,0.7);color:white;padding:5px 10px;border-radius:5px;font-family:sans-serif;font-size:12px">
+        Created by Dakota Rain Lock, powered by Holy Grail. A Dakota Rain Lock Invention.
+    </div>
+    
+</body>
+</html>
